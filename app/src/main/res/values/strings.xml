@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AutoSkip</string>
+    <string name="accessibility_service_description">AutoSkip 使用无障碍服务自动检测并点击开屏广告的"跳过"按钮，仅对白名单中的应用生效。</string>
+</resources>
