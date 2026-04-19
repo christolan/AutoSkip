@@ -332,7 +332,7 @@ fun AppPickerDialog(
     var selectedPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
     val installedApps = remember {
         pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
+            .filter { it.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0 }
             .filter { it.packageName != context.packageName }
             .map { AppItem(it.packageName, pm.getApplicationLabel(it).toString(), pm.getApplicationIcon(it)) }
             .sortedBy { it.appName }
