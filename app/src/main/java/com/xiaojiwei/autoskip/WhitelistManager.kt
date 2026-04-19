@@ -13,6 +13,7 @@ class WhitelistManager(context: Context) {
     companion object {
         private const val KEY_WHITELIST = "whitelist_packages"
         private const val KEY_CUSTOM_KEYWORDS_PREFIX = "keywords_"
+        private const val KEY_TOAST_ENABLED = "toast_enabled"
 
         val DEFAULT_KEYWORDS = listOf(
             "跳过", "跳过广告", "skip", "Skip", "SKIP",
@@ -66,5 +67,13 @@ class WhitelistManager(context: Context) {
 
     fun hasCustomKeywords(packageName: String): Boolean {
         return prefs.getString(KEY_CUSTOM_KEYWORDS_PREFIX + packageName, null) != null
+    }
+
+    fun isToastEnabled(): Boolean {
+        return prefs.getBoolean(KEY_TOAST_ENABLED, false)
+    }
+
+    fun setToastEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TOAST_ENABLED, enabled).apply()
     }
 }

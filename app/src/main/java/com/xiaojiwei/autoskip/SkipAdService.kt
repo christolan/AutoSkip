@@ -1,9 +1,12 @@
 package com.xiaojiwei.autoskip
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 
 class SkipAdService : AccessibilityService() {
 
@@ -84,6 +87,7 @@ class SkipAdService : AccessibilityService() {
             val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             if (result) {
                 Log.i(TAG, "Clicked: '$nodeText' in ${node.packageName}")
+                showToast("已跳过广告")
                 return true
             }
         }
@@ -96,6 +100,7 @@ class SkipAdService : AccessibilityService() {
                 val result = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 if (result) {
                     Log.i(TAG, "Clicked parent of: '$nodeText' in ${node.packageName}")
+                    showToast("已跳过广告")
                     return true
                 }
             }
@@ -108,6 +113,15 @@ class SkipAdService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.w(TAG, "AutoSkip service interrupted")
+    }
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private fun showToast(message: String) {
+        if (!whitelistManager.isToastEnabled()) return
+        handler.post {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onDestroy() {

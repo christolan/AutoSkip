@@ -1,15 +1,19 @@
 package com.xiaojiwei.autoskip
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -25,6 +29,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -57,10 +63,28 @@ fun AutoSkipApp() {
     var showAppPicker by remember { mutableStateOf(false) }
     var showKeywordEditor by remember { mutableStateOf<String?>(null) }
     var whitelistPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
+    var isToastEnabled by remember { mutableStateOf(whitelistManager.isToastEnabled()) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            whitelistManager.setToastEnabled(true)
+            isToastEnabled = true
+        } else {
+            whitelistManager.setToastEnabled(false)
+            isToastEnabled = false
+        }
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isServiceEnabled = isAccessibilityServiceEnabled(context)
         whitelistPackages = whitelistManager.getWhitelistPackages()
+        // 用户可能从系统设置关闭了通知权限，同步状态
+        if (isToastEnabled && !isNotificationPermissionGranted(context)) {
+            whitelistManager.setToastEnabled(false)
+            isToastEnabled = false
+        }
     }
 
     Scaffold(
@@ -88,6 +112,32 @@ fun AutoSkipApp() {
             ServiceStatusCard(isServiceEnabled) {
                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Toast 开关
+            ToastToggleCard(
+                isEnabled = isToastEnabled,
+                onToggle = { enabled ->
+                    if (enabled) {
+                        if (isNotificationPermissionGranted(context)) {
+                            whitelistManager.setToastEnabled(true)
+                            isToastEnabled = true
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            // Android 12 及以下，引导到通知设置
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            context.startActivity(intent)
+                        }
+                    } else {
+                        whitelistManager.setToastEnabled(false)
+                        isToastEnabled = false
+                    }
+                }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -186,6 +236,32 @@ fun ServiceStatusCard(isEnabled: Boolean, onClickEnable: () -> Unit) {
 }
 
 @Composable
+fun ToastToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("跳过提示", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Text(
+                    "跳过广告后弹出 Toast 提示",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(checked = isEnabled, onCheckedChange = onToggle)
+        }
+    }
+}
+
+@Composable
 fun WhitelistAppList(
     packages: List<String>,
     context: Context,
@@ -253,6 +329,7 @@ fun AppPickerDialog(
 ) {
     val pm = context.packageManager
     var searchQuery by remember { mutableStateOf("") }
+    var selectedPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
     val installedApps = remember {
         pm.getInstalledApplications(PackageManager.GET_META_DATA)
             .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
@@ -287,7 +364,7 @@ fun AppPickerDialog(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(filteredApps) { app ->
-                        val isInWhitelist = whitelistManager.isInWhitelist(app.packageName)
+                        val isInWhitelist = app.packageName in selectedPackages
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -297,6 +374,7 @@ fun AppPickerDialog(
                                     } else {
                                         whitelistManager.addPackage(app.packageName)
                                     }
+                                    selectedPackages = whitelistManager.getWhitelistPackages()
                                 }
                                 .padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -320,6 +398,7 @@ fun AppPickerDialog(
                                 onCheckedChange = { checked ->
                                     if (checked) whitelistManager.addPackage(app.packageName)
                                     else whitelistManager.removePackage(app.packageName)
+                                    selectedPackages = whitelistManager.getWhitelistPackages()
                                 }
                             )
                         }
@@ -433,4 +512,14 @@ fun isAccessibilityServiceEnabled(context: Context): Boolean {
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
     ) ?: return false
     return enabledServices.contains(serviceName)
+}
+
+fun isNotificationPermissionGranted(context: Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    } else {
+        NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
 }
