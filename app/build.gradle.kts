@@ -1,7 +1,38 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+val localSigningProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) {
+        file.inputStream().use(::load)
+    }
+}
+
+fun signingProperty(propertyKey: String, envKey: String): String? {
+    return providers.environmentVariable(envKey).orNull
+        ?: localSigningProperties.getProperty(propertyKey)
+}
+
+fun resolveSigningFile(path: String): File {
+    val file = File(path)
+    return if (file.isAbsolute) file else rootProject.file(path)
+}
+
+val releaseStoreFile = signingProperty("storeFile", "AUTOSKIP_KEYSTORE_PATH")
+val releaseStorePassword = signingProperty("storePassword", "AUTOSKIP_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingProperty("keyAlias", "AUTOSKIP_KEY_ALIAS")
+val releaseKeyPassword = signingProperty("keyPassword", "AUTOSKIP_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 
 android {
     namespace = "com.xiaojiwei.autoskip"
@@ -21,10 +52,24 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = resolveSigningFile(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
