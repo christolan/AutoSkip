@@ -10,6 +10,8 @@
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
 /.idea/markdown.xml
+/.idea/deploymentTargetSelector.xml
+/.idea/deviceManager.xml
 .DS_Store
 /build
 /captures
