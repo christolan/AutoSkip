@@ -7,8 +7,7 @@ import org.json.JSONObject
 
 class WhitelistManager(context: Context) {
 
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("autoskip_whitelist", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = context.getSharedPreferences("autoskip_whitelist", Context.MODE_PRIVATE)
 
     companion object {
         private const val KEY_WHITELIST = "whitelist_packages"
@@ -16,8 +15,7 @@ class WhitelistManager(context: Context) {
         private const val KEY_TOAST_ENABLED = "toast_enabled"
 
         val DEFAULT_KEYWORDS = listOf(
-            "跳过", "跳过广告", "skip", "Skip", "SKIP",
-            "关闭广告", "点击跳过", "跳过 %ds"
+            "跳过", "关闭", "跳过广告", "关闭广告",
         )
     }
 
