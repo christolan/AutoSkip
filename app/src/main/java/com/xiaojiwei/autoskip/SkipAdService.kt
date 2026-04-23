@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.xiaojiwei.autoskip
 
 import android.accessibilityservice.AccessibilityService
@@ -36,7 +38,6 @@ class SkipAdService : AccessibilityService() {
     )
 
     private data class SkipCandidate(
-        val matchedNode: AccessibilityNodeInfo,
         val targetNode: AccessibilityNodeInfo,
         val matchedText: String,
         val keyword: String,
@@ -95,25 +96,53 @@ class SkipAdService : AccessibilityService() {
 
     private fun trySkipAd(packageName: String) {
         val root = rootInActiveWindow ?: return
-        val rootBounds = Rect().also(root::getBoundsInScreen)
-        val keywordPatterns = whitelistManager.getKeywords()
-            .mapNotNull(::buildKeywordPattern)
-        if (keywordPatterns.isEmpty()) return
-        val clickedElements = clickedElementSignatures.getOrPut(packageName) { mutableSetOf() }
-        val candidates = collectCandidates(root, rootBounds, keywordPatterns, clickedElements)
-
-        for (candidate in candidates.sortedWith(compareByDescending<SkipCandidate> { it.score }.thenBy { it.depth })) {
-            if (tryClickCandidate(candidate, clickedElements)) {
-                return
-            }
+        val nodesToRecycle = mutableListOf<AccessibilityNodeInfo>()
+        val candidates = try {
+            val rootBounds = Rect().also(root::getBoundsInScreen)
+            val keywordPatterns = whitelistManager.getKeywords()
+                .mapNotNull(::buildKeywordPattern)
+            if (keywordPatterns.isEmpty()) return
+            val clickedElements = clickedElementSignatures.getOrPut(packageName) { mutableSetOf() }
+            collectCandidates(root, rootBounds, keywordPatterns, clickedElements, nodesToRecycle)
+        } finally {
+            root.recycle()
         }
+
+        if (candidates.isEmpty()) {
+            nodesToRecycle.forEach { runCatching { it.recycle() } }
+            return
+        }
+
+        val clickedElements = clickedElementSignatures.getOrPut(packageName) { mutableSetOf() }
+        val sorted = candidates.sortedWith(compareByDescending<SkipCandidate> { it.score }.thenBy { it.depth })
+        for (candidate in sorted) {
+            val signature = buildElementSignature(candidate.targetNode)
+            if (signature in clickedElements) continue
+
+            val result = candidate.targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (!result) continue
+
+            clickedElements.add(signature)
+            val clickType = if (candidate.depth == 0) "self" else "parent(depth=${candidate.depth})"
+            Log.i(
+                TAG,
+                "Clicked $clickType: '${candidate.matchedText}' via '${candidate.keyword}' score=${candidate.score} in ${candidate.targetNode.packageName}"
+            )
+            showToast("已跳过广告")
+            break
+        }
+
+        // 统一回收所有候选 targetNode（它们均未被包含在 nodesToRecycle 中）
+        candidates.forEach { runCatching { it.targetNode.recycle() } }
+        nodesToRecycle.forEach { runCatching { it.recycle() } }
     }
 
     private fun collectCandidates(
         root: AccessibilityNodeInfo,
         rootBounds: Rect,
         keywordPatterns: List<KeywordPattern>,
-        clickedElements: Set<String>
+        clickedElements: Set<String>,
+        nodesToRecycle: MutableList<AccessibilityNodeInfo>
     ): List<SkipCandidate> {
         val candidates = mutableListOf<SkipCandidate>()
         val candidateKeys = mutableSetOf<String>()
@@ -123,7 +152,7 @@ class SkipAdService : AccessibilityService() {
                 val nodes = root.findAccessibilityNodeInfosByText(searchTerm)
                 if (nodes.isNullOrEmpty()) continue
                 for (node in nodes) {
-                    addCandidate(
+                    val retained = addCandidate(
                         node = node,
                         pattern = pattern,
                         rootBounds = rootBounds,
@@ -131,27 +160,49 @@ class SkipAdService : AccessibilityService() {
                         candidateKeys = candidateKeys,
                         candidates = candidates
                     )
+                    if (!retained) {
+                        nodesToRecycle.add(node)
+                    }
                 }
             }
         }
 
         val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
+        for (index in 0 until root.childCount) {
+            root.getChild(index)?.let(queue::addLast)
+        }
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
+            var retained = false
             for (pattern in keywordPatterns) {
-                addCandidate(
+                if (addCandidate(
+                        node = node,
+                        pattern = pattern,
+                        rootBounds = rootBounds,
+                        clickedElements = clickedElements,
+                        candidateKeys = candidateKeys,
+                        candidates = candidates
+                    )
+                ) {
+                    retained = true
+                }
+            }
+            if (tryAddResourceCandidate(
                     node = node,
-                    pattern = pattern,
                     rootBounds = rootBounds,
                     clickedElements = clickedElements,
                     candidateKeys = candidateKeys,
                     candidates = candidates
                 )
+            ) {
+                retained = true
             }
 
             for (index in 0 until node.childCount) {
                 node.getChild(index)?.let(queue::addLast)
+            }
+            if (!retained) {
+                nodesToRecycle.add(node)
             }
         }
 
@@ -165,47 +216,138 @@ class SkipAdService : AccessibilityService() {
         clickedElements: Set<String>,
         candidateKeys: MutableSet<String>,
         candidates: MutableList<SkipCandidate>
-    ) {
-        val matchedText = findMatchedText(node, pattern) ?: return
-        val clickTarget = findClickTarget(node, rootBounds) ?: return
-        val targetSignature = buildElementSignature(clickTarget.node)
-        if (targetSignature in clickedElements) return
+    ): Boolean {
+        val matchedText = findMatchedText(node, pattern) ?: return false
+        val clickTarget = findClickTarget(node, rootBounds) ?: return false
+        val targetNode = clickTarget.node
+
+        val targetSignature = buildElementSignature(targetNode)
+        if (targetSignature in clickedElements) {
+            if (targetNode !== node) targetNode.recycle()
+            return false
+        }
 
         val candidateKey = buildElementSignature(node) + "|" + targetSignature + "|" + pattern.keyword
-        if (!candidateKeys.add(candidateKey)) return
+        if (!candidateKeys.add(candidateKey)) {
+            if (targetNode !== node) targetNode.recycle()
+            return false
+        }
 
         val score = scoreCandidate(node, clickTarget, matchedText, pattern, rootBounds)
-        if (score <= 0) return
+        if (score <= 0) {
+            if (targetNode !== node) targetNode.recycle()
+            return false
+        }
 
         candidates.add(
             SkipCandidate(
-                matchedNode = node,
-                targetNode = clickTarget.node,
+                targetNode = targetNode,
                 matchedText = matchedText,
                 keyword = pattern.keyword,
                 score = score,
                 depth = clickTarget.depth
             )
         )
+        return targetNode === node
     }
 
-    private fun tryClickCandidate(candidate: SkipCandidate, clickedElements: MutableSet<String>): Boolean {
-        val signature = buildElementSignature(candidate.targetNode)
-        if (signature in clickedElements) return false
+    private fun tryAddResourceCandidate(
+        node: AccessibilityNodeInfo,
+        rootBounds: Rect,
+        clickedElements: Set<String>,
+        candidateKeys: MutableSet<String>,
+        candidates: MutableList<SkipCandidate>
+    ): Boolean {
+        val resourceName = node.viewIdResourceName ?: return false
+        val lowerResource = resourceName.lowercase()
+        val matchedKeyword = resourceHintKeywords.firstOrNull { it in lowerResource } ?: return false
 
-        val result = candidate.targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        if (result) {
-            clickedElements.add(signature)
-            val clickType = if (candidate.depth == 0) "self" else "parent(depth=${candidate.depth})"
-            Log.i(
-                TAG,
-                "Clicked $clickType: '${candidate.matchedText}' via '${candidate.keyword}' score=${candidate.score} in ${candidate.targetNode.packageName}"
-            )
-            showToast("已跳过广告")
-            return true
+        val clickTarget = findClickTarget(node, rootBounds) ?: return false
+        val targetNode = clickTarget.node
+
+        val targetSignature = buildElementSignature(targetNode)
+        if (targetSignature in clickedElements) {
+            if (targetNode !== node) targetNode.recycle()
+            return false
         }
 
-        return false
+        val candidateKey = "resource|$targetSignature|$matchedKeyword"
+        if (!candidateKeys.add(candidateKey)) {
+            if (targetNode !== node) targetNode.recycle()
+            return false
+        }
+
+        val score = scoreResourceCandidate(clickTarget, rootBounds)
+        if (score <= 0) {
+            if (targetNode !== node) targetNode.recycle()
+            return false
+        }
+
+        candidates.add(
+            SkipCandidate(
+                targetNode = targetNode,
+                matchedText = "[$matchedKeyword]",
+                keyword = matchedKeyword,
+                score = score,
+                depth = clickTarget.depth
+            )
+        )
+        return targetNode === node
+    }
+
+    private fun scoreResourceCandidate(
+        clickTarget: ClickTarget,
+        rootBounds: Rect
+    ): Int {
+        val targetBounds = Rect().also(clickTarget.node::getBoundsInScreen)
+        val rootWidth = rootBounds.width().coerceAtLeast(1)
+        val rootHeight = rootBounds.height().coerceAtLeast(1)
+        val rootArea = rootWidth * rootHeight
+        val targetArea = targetBounds.width().coerceAtLeast(1) * targetBounds.height().coerceAtLeast(1)
+        val areaRatio = targetArea.toDouble() / rootArea.toDouble()
+        val centerXRatio = (targetBounds.centerX() - rootBounds.left).toDouble() / rootWidth.toDouble()
+        val centerYRatio = (targetBounds.centerY() - rootBounds.top).toDouble() / rootHeight.toDouble()
+        val widthRatio = targetBounds.width().toDouble() / rootWidth.toDouble()
+        val heightRatio = targetBounds.height().toDouble() / rootHeight.toDouble()
+
+        var score = 80
+
+        score += when {
+            centerXRatio >= 0.72 -> 18
+            centerXRatio >= 0.55 -> 8
+            centerXRatio <= 0.15 -> 8
+            else -> -2
+        }
+
+        score += when {
+            centerYRatio <= 0.22 -> 22
+            centerYRatio <= 0.38 -> 12
+            centerYRatio <= 0.55 -> 4
+            else -> -10
+        }
+
+        score += when {
+            areaRatio <= 0.015 -> 18
+            areaRatio <= 0.04 -> 12
+            areaRatio <= 0.08 -> 6
+            areaRatio <= 0.16 -> 0
+            else -> -20
+        }
+
+        if (widthRatio > 0.5) score -= 16
+        if (heightRatio > 0.18) score -= 10
+
+        val className = clickTarget.node.className?.toString()?.lowercase().orEmpty()
+        score += when {
+            "button" in className -> 12
+            "imageview" in className -> 8
+            "textview" in className -> 6
+            else -> 0
+        }
+
+        score += 15 // resourceId 直接匹配奖励
+
+        return score
     }
 
     private fun findClickTarget(node: AccessibilityNodeInfo, rootBounds: Rect): ClickTarget? {
@@ -222,9 +364,12 @@ class SkipAdService : AccessibilityService() {
             if (parent.isClickable && isReasonableTarget(parent, rootBounds)) {
                 return ClickTarget(parent, depth)
             }
-            parent = parent.parent
+            val nextParent = parent.parent
+            parent.recycle()
+            parent = nextParent
         }
 
+        parent?.recycle()
         return null
     }
 
@@ -336,7 +481,8 @@ class SkipAdService : AccessibilityService() {
         score += when {
             centerXRatio >= 0.72 -> 18
             centerXRatio >= 0.55 -> 8
-            else -> -6
+            centerXRatio <= 0.15 -> 8
+            else -> -2
         }
 
         score += when {
