@@ -96,11 +96,6 @@ fun AutoSkipApp() {
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showAppPicker = true }) {
-                Text("+", fontSize = 24.sp)
-            }
         }
     ) { innerPadding ->
         LazyColumn(
@@ -143,6 +138,10 @@ fun AutoSkipApp() {
             }
 
             item {
+                AddWhitelistCard(onClick = { showAppPicker = true })
+            }
+
+            item {
                 Text(
                     "白名单应用 (${whitelistPackages.size})",
                     style = MaterialTheme.typography.titleMedium,
@@ -153,7 +152,7 @@ fun AutoSkipApp() {
             if (whitelistPackages.isEmpty()) {
                 item {
                     Text(
-                        "点击右下角 + 添加需要跳过广告的应用",
+                        "点击上方“添加白名单应用”选择需要跳过广告的应用",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -255,6 +254,34 @@ fun ToastToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
                 )
             }
             Switch(checked = isEnabled, onCheckedChange = onToggle)
+        }
+    }
+}
+
+@Composable
+fun AddWhitelistCard(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("添加白名单应用", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Text(
+                    "选择需要自动跳过开屏广告的应用",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text("+", fontSize = 24.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
