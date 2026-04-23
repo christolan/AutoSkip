@@ -33,6 +33,9 @@ val hasReleaseSigning = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
+val gitCommitHash = providers.exec {
+    commandLine("git", "-C", rootDir.absolutePath, "rev-parse", "--short", "HEAD")
+}.standardOutput.asText.map(String::trim).orElse("unknown")
 
 android {
     namespace = "com.xiaojiwei.autoskip"
@@ -46,8 +49,8 @@ android {
         applicationId = "com.xiaojiwei.autoskip"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -78,6 +81,18 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set(
+                output.versionName.zip(gitCommitHash) { versionName, commitHash ->
+                    "AutoSkip-v${versionName}-${variant.buildType}-$commitHash.apk"
+                }
+            )
+        }
     }
 }
 
