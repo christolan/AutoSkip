@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import java.util.ArrayDeque
 
 class SkipAdService : AccessibilityService() {
 
@@ -22,9 +23,31 @@ class SkipAdService : AccessibilityService() {
     // 检测窗口期：窗口出现后 N 毫秒内进行检测
     private val detectionWindowMs = 8_000L
 
+    private data class KeywordPattern(
+        val keyword: String,
+        val regex: Regex,
+        val normalizedLength: Int,
+        val searchTerms: List<String>
+    )
+
+    private data class ClickTarget(
+        val node: AccessibilityNodeInfo,
+        val depth: Int
+    )
+
+    private data class SkipCandidate(
+        val matchedNode: AccessibilityNodeInfo,
+        val targetNode: AccessibilityNodeInfo,
+        val matchedText: String,
+        val keyword: String,
+        val score: Int,
+        val depth: Int
+    )
+
     companion object {
         private const val TAG = "SkipAdService"
         private val sentencePunctuation = setOf('，', '。', '！', '？', '；', '：', ',', '.', '!', '?', ';', ':', '\n')
+        private val resourceHintKeywords = listOf("skip", "close", "dismiss", "countdown", "timer")
         var isRunning = false
             private set
     }
@@ -72,73 +95,154 @@ class SkipAdService : AccessibilityService() {
 
     private fun trySkipAd(packageName: String) {
         val root = rootInActiveWindow ?: return
-        val keywords = whitelistManager.getKeywords()
+        val rootBounds = Rect().also(root::getBoundsInScreen)
+        val keywordPatterns = whitelistManager.getKeywords()
+            .mapNotNull(::buildKeywordPattern)
+        if (keywordPatterns.isEmpty()) return
+        val clickedElements = clickedElementSignatures.getOrPut(packageName) { mutableSetOf() }
+        val candidates = collectCandidates(root, rootBounds, keywordPatterns, clickedElements)
 
-        for (keyword in keywords) {
-            for (searchTerm in buildSearchTerms(keyword)) {
-                val nodes = root.findAccessibilityNodeInfosByText(searchTerm)
-                if (nodes.isNullOrEmpty()) continue
-
-                for (node in nodes) {
-                    if (tryClickNode(node, keyword)) {
-                        return
-                    }
-                }
+        for (candidate in candidates.sortedWith(compareByDescending<SkipCandidate> { it.score }.thenBy { it.depth })) {
+            if (tryClickCandidate(candidate, clickedElements)) {
+                return
             }
         }
     }
 
-    private fun tryClickNode(node: AccessibilityNodeInfo, keyword: String): Boolean {
-        // 仅接受短文本按钮文案，避免“跳过去”这类正文误命中
-        if (!matchesKeyword(node, keyword)) {
-            return false
+    private fun collectCandidates(
+        root: AccessibilityNodeInfo,
+        rootBounds: Rect,
+        keywordPatterns: List<KeywordPattern>,
+        clickedElements: Set<String>
+    ): List<SkipCandidate> {
+        val candidates = mutableListOf<SkipCandidate>()
+        val candidateKeys = mutableSetOf<String>()
+
+        for (pattern in keywordPatterns) {
+            for (searchTerm in pattern.searchTerms) {
+                val nodes = root.findAccessibilityNodeInfosByText(searchTerm)
+                if (nodes.isNullOrEmpty()) continue
+                for (node in nodes) {
+                    addCandidate(
+                        node = node,
+                        pattern = pattern,
+                        rootBounds = rootBounds,
+                        clickedElements = clickedElements,
+                        candidateKeys = candidateKeys,
+                        candidates = candidates
+                    )
+                }
+            }
         }
 
-        val nodeText = node.text?.toString() ?: node.contentDescription?.toString().orEmpty()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            for (pattern in keywordPatterns) {
+                addCandidate(
+                    node = node,
+                    pattern = pattern,
+                    rootBounds = rootBounds,
+                    clickedElements = clickedElements,
+                    candidateKeys = candidateKeys,
+                    candidates = candidates
+                )
+            }
 
-        val clickedElements = clickedElementSignatures.getOrPut(
-            node.packageName?.toString() ?: return false
-        ) { mutableSetOf() }
-
-        // 如果节点本身可点击，直接点击
-        if (node.isClickable) {
-            val signature = buildElementSignature(node)
-            if (signature in clickedElements) return false
-
-            val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            if (result) {
-                clickedElements.add(signature)
-                Log.i(TAG, "Clicked: '$nodeText' in ${node.packageName}")
-                showToast("已跳过广告")
-                return true
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let(queue::addLast)
             }
         }
 
-        // 否则向上查找可点击的父节点
-        var parent = node.parent
-        var depth = 0
-        while (parent != null && depth < 5) {
-            if (parent.isClickable) {
-                val signature = buildElementSignature(parent)
-                if (signature in clickedElements) {
-                    parent = parent.parent
-                    depth++
-                    continue
-                }
+        return candidates
+    }
 
-                val result = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                if (result) {
-                    clickedElements.add(signature)
-                    Log.i(TAG, "Clicked parent of: '$nodeText' in ${node.packageName}")
-                    showToast("已跳过广告")
-                    return true
-                }
-            }
-            parent = parent.parent
-            depth++
+    private fun addCandidate(
+        node: AccessibilityNodeInfo,
+        pattern: KeywordPattern,
+        rootBounds: Rect,
+        clickedElements: Set<String>,
+        candidateKeys: MutableSet<String>,
+        candidates: MutableList<SkipCandidate>
+    ) {
+        val matchedText = findMatchedText(node, pattern) ?: return
+        val clickTarget = findClickTarget(node, rootBounds) ?: return
+        val targetSignature = buildElementSignature(clickTarget.node)
+        if (targetSignature in clickedElements) return
+
+        val candidateKey = buildElementSignature(node) + "|" + targetSignature + "|" + pattern.keyword
+        if (!candidateKeys.add(candidateKey)) return
+
+        val score = scoreCandidate(node, clickTarget, matchedText, pattern, rootBounds)
+        if (score <= 0) return
+
+        candidates.add(
+            SkipCandidate(
+                matchedNode = node,
+                targetNode = clickTarget.node,
+                matchedText = matchedText,
+                keyword = pattern.keyword,
+                score = score,
+                depth = clickTarget.depth
+            )
+        )
+    }
+
+    private fun tryClickCandidate(candidate: SkipCandidate, clickedElements: MutableSet<String>): Boolean {
+        val signature = buildElementSignature(candidate.targetNode)
+        if (signature in clickedElements) return false
+
+        val result = candidate.targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (result) {
+            clickedElements.add(signature)
+            val clickType = if (candidate.depth == 0) "self" else "parent(depth=${candidate.depth})"
+            Log.i(
+                TAG,
+                "Clicked $clickType: '${candidate.matchedText}' via '${candidate.keyword}' score=${candidate.score} in ${candidate.targetNode.packageName}"
+            )
+            showToast("已跳过广告")
+            return true
         }
 
         return false
+    }
+
+    private fun findClickTarget(node: AccessibilityNodeInfo, rootBounds: Rect): ClickTarget? {
+        if (!node.isVisibleToUser) return null
+
+        if (node.isClickable && isReasonableTarget(node, rootBounds)) {
+            return ClickTarget(node, 0)
+        }
+
+        var parent = node.parent
+        var depth = 0
+        while (parent != null && depth < 5) {
+            depth++
+            if (parent.isClickable && isReasonableTarget(parent, rootBounds)) {
+                return ClickTarget(parent, depth)
+            }
+            parent = parent.parent
+        }
+
+        return null
+    }
+
+    private fun isReasonableTarget(node: AccessibilityNodeInfo, rootBounds: Rect): Boolean {
+        if (!node.isVisibleToUser) return false
+
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val rootArea = rootBounds.width().coerceAtLeast(1) * rootBounds.height().coerceAtLeast(1)
+        val nodeArea = bounds.width().coerceAtLeast(0) * bounds.height().coerceAtLeast(0)
+        if (nodeArea == 0) return false
+
+        val areaRatio = nodeArea.toDouble() / rootArea.toDouble()
+        val widthRatio = bounds.width().toDouble() / rootBounds.width().coerceAtLeast(1).toDouble()
+        val heightRatio = bounds.height().toDouble() / rootBounds.height().coerceAtLeast(1).toDouble()
+
+        return areaRatio <= 0.45 &&
+            !(widthRatio >= 0.95 && heightRatio >= 0.5) &&
+            heightRatio <= 0.45
     }
 
     private fun buildElementSignature(node: AccessibilityNodeInfo): String {
@@ -150,6 +254,18 @@ class SkipAdService : AccessibilityService() {
             node.className?.toString().orEmpty(),
             bounds.flattenToString()
         ).joinToString("|")
+    }
+
+    private fun buildKeywordPattern(keyword: String): KeywordPattern? {
+        val normalizedKeyword = keyword.trim()
+        if (normalizedKeyword.isEmpty()) return null
+
+        return KeywordPattern(
+            keyword = normalizedKeyword,
+            regex = buildKeywordRegex(normalizedKeyword),
+            normalizedLength = normalizeCandidateText(normalizedKeyword).length,
+            searchTerms = buildSearchTerms(normalizedKeyword)
+        )
     }
 
     private fun buildSearchTerms(keyword: String): List<String> {
@@ -171,17 +287,98 @@ class SkipAdService : AccessibilityService() {
         }
     }
 
-    private fun matchesKeyword(node: AccessibilityNodeInfo, keyword: String): Boolean {
-        val matcher = buildKeywordRegex(keyword)
+    private fun findMatchedText(node: AccessibilityNodeInfo, pattern: KeywordPattern): String? {
         return sequenceOf(node.text?.toString(), node.contentDescription?.toString())
             .filterNotNull()
             .map(::normalizeCandidateText)
             .filter(String::isNotEmpty)
-            .any { candidate ->
-                candidate.length <= maxOf(normalizeCandidateText(keyword).length + 6, 8) &&
+            .firstOrNull { candidate ->
+                candidate.length <= maxOf(pattern.normalizedLength + 6, 8) &&
                     candidate.none(sentencePunctuation::contains) &&
-                    matcher.matches(candidate)
+                    pattern.regex.matches(candidate)
             }
+    }
+
+    private fun scoreCandidate(
+        matchedNode: AccessibilityNodeInfo,
+        clickTarget: ClickTarget,
+        matchedText: String,
+        pattern: KeywordPattern,
+        rootBounds: Rect
+    ): Int {
+        val targetBounds = Rect().also(clickTarget.node::getBoundsInScreen)
+        val rootWidth = rootBounds.width().coerceAtLeast(1)
+        val rootHeight = rootBounds.height().coerceAtLeast(1)
+        val rootArea = rootWidth * rootHeight
+        val targetArea = targetBounds.width().coerceAtLeast(1) * targetBounds.height().coerceAtLeast(1)
+        val areaRatio = targetArea.toDouble() / rootArea.toDouble()
+        val centerXRatio = (targetBounds.centerX() - rootBounds.left).toDouble() / rootWidth.toDouble()
+        val centerYRatio = (targetBounds.centerY() - rootBounds.top).toDouble() / rootHeight.toDouble()
+        val widthRatio = targetBounds.width().toDouble() / rootWidth.toDouble()
+        val heightRatio = targetBounds.height().toDouble() / rootHeight.toDouble()
+
+        var score = 120
+
+        score += when {
+            matchedText.equals(pattern.keyword, ignoreCase = true) -> 24
+            matchedText.length <= pattern.normalizedLength + 2 -> 18
+            else -> 10
+        }
+
+        score += when (clickTarget.depth) {
+            0 -> 20
+            1 -> 14
+            2 -> 10
+            3 -> 6
+            else -> 2
+        }
+
+        score += when {
+            centerXRatio >= 0.72 -> 18
+            centerXRatio >= 0.55 -> 8
+            else -> -6
+        }
+
+        score += when {
+            centerYRatio <= 0.22 -> 22
+            centerYRatio <= 0.38 -> 12
+            centerYRatio <= 0.55 -> 4
+            else -> -10
+        }
+
+        score += when {
+            areaRatio <= 0.015 -> 18
+            areaRatio <= 0.04 -> 12
+            areaRatio <= 0.08 -> 6
+            areaRatio <= 0.16 -> 0
+            else -> -20
+        }
+
+        if (widthRatio > 0.5) score -= 16
+        if (heightRatio > 0.18) score -= 10
+
+        val className = clickTarget.node.className?.toString()?.lowercase().orEmpty()
+        score += when {
+            "button" in className -> 12
+            "imageview" in className -> 8
+            "textview" in className -> 6
+            else -> 0
+        }
+
+        val resourceText = listOf(
+            clickTarget.node.viewIdResourceName,
+            matchedNode.viewIdResourceName
+        ).filterNotNull().joinToString(" ").lowercase()
+        score += when {
+            resourceHintKeywords.any { hint -> hint in resourceText } -> 10
+            else -> 0
+        }
+
+        if (!matchedNode.isClickable && clickTarget.node.isClickable) {
+            score += 4
+        }
+
+        return score
     }
 
     private fun buildKeywordRegex(keyword: String): Regex {
