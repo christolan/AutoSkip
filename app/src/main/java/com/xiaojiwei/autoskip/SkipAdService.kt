@@ -66,7 +66,7 @@ class SkipAdService : AccessibilityService() {
 
     private fun trySkipAd(packageName: String) {
         val root = rootInActiveWindow ?: return
-        val keywords = whitelistManager.getKeywordsForPackage(packageName)
+        val keywords = whitelistManager.getKeywords()
 
         for (keyword in keywords) {
             val nodes = root.findAccessibilityNodeInfosByText(keyword)

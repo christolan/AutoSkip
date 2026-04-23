@@ -62,9 +62,10 @@ fun AutoSkipApp() {
     val whitelistManager = remember { WhitelistManager(context) }
     var isServiceEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
     var showAppPicker by remember { mutableStateOf(false) }
-    var showKeywordEditor by remember { mutableStateOf<String?>(null) }
+    var showKeywordEditor by remember { mutableStateOf(false) }
     var whitelistPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
     var isToastEnabled by remember { mutableStateOf(whitelistManager.isToastEnabled()) }
+    var globalKeywords by remember { mutableStateOf(whitelistManager.getKeywords()) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -81,6 +82,7 @@ fun AutoSkipApp() {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isServiceEnabled = isAccessibilityServiceEnabled(context)
         whitelistPackages = whitelistManager.getWhitelistPackages()
+        globalKeywords = whitelistManager.getKeywords()
         // 用户可能从系统设置关闭了通知权限，同步状态
         if (isToastEnabled && !isNotificationPermissionGranted(context)) {
             whitelistManager.setToastEnabled(false)
@@ -138,6 +140,13 @@ fun AutoSkipApp() {
             }
 
             item {
+                KeywordConfigCard(
+                    keywordCount = globalKeywords.size,
+                    onClick = { showKeywordEditor = true }
+                )
+            }
+
+            item {
                 AddWhitelistCard(onClick = { showAppPicker = true })
             }
 
@@ -160,12 +169,10 @@ fun AutoSkipApp() {
                 WhitelistAppList(
                     packages = whitelistPackages.toList().sorted(),
                     context = context,
-                    whitelistManager = whitelistManager,
                     onRemove = { pkg ->
                         whitelistManager.removePackage(pkg)
                         whitelistPackages = whitelistManager.getWhitelistPackages()
-                    },
-                    onEditKeywords = { pkg -> showKeywordEditor = pkg }
+                    }
                 )
             }
         }
@@ -184,11 +191,13 @@ fun AutoSkipApp() {
     }
 
     // 关键词编辑弹窗
-    showKeywordEditor?.let { pkg ->
+    if (showKeywordEditor) {
         KeywordEditorDialog(
-            packageName = pkg,
             whitelistManager = whitelistManager,
-            onDismiss = { showKeywordEditor = null }
+            onDismiss = {
+                showKeywordEditor = false
+                globalKeywords = whitelistManager.getKeywords()
+            }
         )
     }
 }
@@ -286,12 +295,38 @@ fun AddWhitelistCard(onClick: () -> Unit) {
     }
 }
 
+@Composable
+fun KeywordConfigCard(keywordCount: Int, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("跳过关键词", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Text(
+                    "全局生效，当前 $keywordCount 个关键词",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text("配置", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
 private fun LazyListScope.WhitelistAppList(
     packages: List<String>,
     context: Context,
-    whitelistManager: WhitelistManager,
-    onRemove: (String) -> Unit,
-    onEditKeywords: (String) -> Unit
+    onRemove: (String) -> Unit
 ) {
     val pm = context.packageManager
 
@@ -299,9 +334,7 @@ private fun LazyListScope.WhitelistAppList(
         WhitelistAppCard(
             packageName = pkg,
             packageManager = pm,
-            whitelistManager = whitelistManager,
-            onRemove = onRemove,
-            onEditKeywords = onEditKeywords
+            onRemove = onRemove
         )
     }
 }
@@ -310,9 +343,7 @@ private fun LazyListScope.WhitelistAppList(
 private fun WhitelistAppCard(
     packageName: String,
     packageManager: PackageManager,
-    whitelistManager: WhitelistManager,
-    onRemove: (String) -> Unit,
-    onEditKeywords: (String) -> Unit
+    onRemove: (String) -> Unit
 ) {
     val appInfo = try {
         packageManager.getApplicationInfo(packageName, 0)
@@ -320,7 +351,6 @@ private fun WhitelistAppCard(
 
     val appName = appInfo?.let { packageManager.getApplicationLabel(it).toString() } ?: packageName
     val icon = appInfo?.let { packageManager.getApplicationIcon(it) }
-    val hasCustom = whitelistManager.hasCustomKeywords(packageName)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -344,15 +374,12 @@ private fun WhitelistAppCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(appName, fontWeight = FontWeight.Medium, fontSize = 15.sp)
                 Text(
-                    if (hasCustom) "自定义关键词" else "默认关键词",
+                    packageName,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            TextButton(onClick = { onEditKeywords(packageName) }) {
-                Text("关键词")
-            }
             TextButton(onClick = { onRemove(packageName) }) {
                 Text("移除", color = MaterialTheme.colorScheme.error)
             }
@@ -453,29 +480,25 @@ fun AppPickerDialog(
 
 @Composable
 fun KeywordEditorDialog(
-    packageName: String,
     whitelistManager: WhitelistManager,
     onDismiss: () -> Unit
 ) {
     val currentKeywords = remember {
-        whitelistManager.getKeywordsForPackage(packageName).toMutableStateList()
+        whitelistManager.getKeywords().toMutableStateList()
     }
     var newKeyword by remember { mutableStateOf("") }
-    val hasCustom = whitelistManager.hasCustomKeywords(packageName)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("编辑关键词") },
+        title = { Text("编辑全局关键词") },
         text = {
             Column {
-                if (!hasCustom) {
-                    Text(
-                        "当前使用默认关键词，添加或删除后将切换为自定义模式",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
+                Text(
+                    "关键词会对所有白名单应用统一生效",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
@@ -520,7 +543,7 @@ fun KeywordEditorDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                whitelistManager.setKeywordsForPackage(packageName, currentKeywords.toList())
+                whitelistManager.setKeywords(currentKeywords.toList())
                 onDismiss()
             }) {
                 Text("保存")
@@ -528,13 +551,11 @@ fun KeywordEditorDialog(
         },
         dismissButton = {
             Row {
-                if (hasCustom) {
-                    TextButton(onClick = {
-                        whitelistManager.clearCustomKeywords(packageName)
-                        onDismiss()
-                    }) {
-                        Text("恢复默认")
-                    }
+                TextButton(onClick = {
+                    whitelistManager.resetKeywords()
+                    onDismiss()
+                }) {
+                    Text("恢复默认")
                 }
                 TextButton(onClick = onDismiss) {
                     Text("取消")
