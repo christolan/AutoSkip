@@ -15,7 +15,7 @@ class WhitelistManager(context: Context) {
         private const val KEY_TOAST_ENABLED = "toast_enabled"
 
         val DEFAULT_KEYWORDS = listOf(
-            "跳过", "关闭", "跳过广告", "关闭广告",
+            "跳过", "跳过广告", "skip", "Skip", "SKIP", "关闭广告", "点击跳过", "跳过 %ds"
         )
     }
 
