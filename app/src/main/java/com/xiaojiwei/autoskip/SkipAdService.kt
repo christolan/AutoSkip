@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -14,6 +15,9 @@ class SkipAdService : AccessibilityService() {
 
     // 每个包名的窗口首次出现时间，用于限制检测窗口期
     private val windowStartTimes = mutableMapOf<String, Long>()
+
+    // 当前窗口期内已点击的元素，避免重复点击同一个目标
+    private val clickedElementSignatures = mutableMapOf<String, MutableSet<String>>()
 
     // 检测窗口期：窗口出现后 N 毫秒内进行检测
     private val detectionWindowMs = 8_000L
@@ -44,6 +48,7 @@ class SkipAdService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 // 记录窗口切换时间
                 windowStartTimes[packageName] = now
+                clickedElementSignatures.remove(packageName)
                 trySkipAd(packageName)
             }
 
@@ -52,6 +57,8 @@ class SkipAdService : AccessibilityService() {
                 val startTime = windowStartTimes[packageName] ?: return
                 if (now - startTime <= detectionWindowMs) {
                     trySkipAd(packageName)
+                } else {
+                    clickedElementSignatures.remove(packageName)
                 }
             }
         }
@@ -82,10 +89,18 @@ class SkipAdService : AccessibilityService() {
             return false
         }
 
+        val clickedElements = clickedElementSignatures.getOrPut(
+            node.packageName?.toString() ?: return false
+        ) { mutableSetOf() }
+
         // 如果节点本身可点击，直接点击
         if (node.isClickable) {
+            val signature = buildElementSignature(node)
+            if (signature in clickedElements) return false
+
             val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             if (result) {
+                clickedElements.add(signature)
                 Log.i(TAG, "Clicked: '$nodeText' in ${node.packageName}")
                 showToast("已跳过广告")
                 return true
@@ -97,8 +112,16 @@ class SkipAdService : AccessibilityService() {
         var depth = 0
         while (parent != null && depth < 5) {
             if (parent.isClickable) {
+                val signature = buildElementSignature(parent)
+                if (signature in clickedElements) {
+                    parent = parent.parent
+                    depth++
+                    continue
+                }
+
                 val result = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 if (result) {
+                    clickedElements.add(signature)
                     Log.i(TAG, "Clicked parent of: '$nodeText' in ${node.packageName}")
                     showToast("已跳过广告")
                     return true
@@ -109,6 +132,17 @@ class SkipAdService : AccessibilityService() {
         }
 
         return false
+    }
+
+    private fun buildElementSignature(node: AccessibilityNodeInfo): String {
+        val bounds = Rect().also(node::getBoundsInScreen)
+        return listOf(
+            node.packageName?.toString().orEmpty(),
+            node.windowId.toString(),
+            node.viewIdResourceName.orEmpty(),
+            node.className?.toString().orEmpty(),
+            bounds.flattenToString()
+        ).joinToString("|")
     }
 
     override fun onInterrupt() {
@@ -127,6 +161,8 @@ class SkipAdService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        clickedElementSignatures.clear()
+        windowStartTimes.clear()
         Log.i(TAG, "AutoSkip service destroyed")
     }
 }

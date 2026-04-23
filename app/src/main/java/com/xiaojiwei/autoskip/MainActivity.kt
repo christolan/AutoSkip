@@ -18,6 +18,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -102,58 +103,55 @@ fun AutoSkipApp() {
             }
         }
     ) { innerPadding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp)
         ) {
-            // 服务状态卡片
-            ServiceStatusCard(isServiceEnabled) {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            item {
+                ServiceStatusCard(isServiceEnabled) {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Toast 开关
-            ToastToggleCard(
-                isEnabled = isToastEnabled,
-                onToggle = { enabled ->
-                    if (enabled) {
-                        if (isNotificationPermissionGranted(context)) {
-                            whitelistManager.setToastEnabled(true)
-                            isToastEnabled = true
-                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } else {
-                            // Android 12 及以下，引导到通知设置
-                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            item {
+                ToastToggleCard(
+                    isEnabled = isToastEnabled,
+                    onToggle = { enabled ->
+                        if (enabled) {
+                            if (isNotificationPermissionGranted(context)) {
+                                whitelistManager.setToastEnabled(true)
+                                isToastEnabled = true
+                            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                // Android 12 及以下，引导到通知设置
+                                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                }
+                                context.startActivity(intent)
                             }
-                            context.startActivity(intent)
+                        } else {
+                            whitelistManager.setToastEnabled(false)
+                            isToastEnabled = false
                         }
-                    } else {
-                        whitelistManager.setToastEnabled(false)
-                        isToastEnabled = false
                     }
-                }
-            )
+                )
+            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                "白名单应用 (${whitelistPackages.size})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
+            item {
+                Text(
+                    "白名单应用 (${whitelistPackages.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
             if (whitelistPackages.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
+                item {
                     Text(
                         "点击右下角 + 添加需要跳过广告的应用",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -261,8 +259,7 @@ fun ToastToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
     }
 }
 
-@Composable
-fun WhitelistAppList(
+private fun LazyListScope.WhitelistAppList(
     packages: List<String>,
     context: Context,
     whitelistManager: WhitelistManager,
@@ -271,51 +268,66 @@ fun WhitelistAppList(
 ) {
     val pm = context.packageManager
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(packages) { pkg ->
-            val appInfo = try {
-                pm.getApplicationInfo(pkg, 0)
-            } catch (_: Exception) { null }
+    items(packages) { pkg ->
+        WhitelistAppCard(
+            packageName = pkg,
+            packageManager = pm,
+            whitelistManager = whitelistManager,
+            onRemove = onRemove,
+            onEditKeywords = onEditKeywords
+        )
+    }
+}
 
-            val appName = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: pkg
-            val icon = appInfo?.let { pm.getApplicationIcon(it) }
-            val hasCustom = whitelistManager.hasCustomKeywords(pkg)
+@Composable
+private fun WhitelistAppCard(
+    packageName: String,
+    packageManager: PackageManager,
+    whitelistManager: WhitelistManager,
+    onRemove: (String) -> Unit,
+    onEditKeywords: (String) -> Unit
+) {
+    val appInfo = try {
+        packageManager.getApplicationInfo(packageName, 0)
+    } catch (_: Exception) { null }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    icon?.let {
-                        Image(
-                            bitmap = it.toBitmap(48, 48).asImageBitmap(),
-                            contentDescription = appName,
-                            modifier = Modifier.size(40.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                    }
+    val appName = appInfo?.let { packageManager.getApplicationLabel(it).toString() } ?: packageName
+    val icon = appInfo?.let { packageManager.getApplicationIcon(it) }
+    val hasCustom = whitelistManager.hasCustomKeywords(packageName)
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(appName, fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                        Text(
-                            if (hasCustom) "自定义关键词" else "默认关键词",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            icon?.let {
+                Image(
+                    bitmap = it.toBitmap(48, 48).asImageBitmap(),
+                    contentDescription = appName,
+                    modifier = Modifier.size(40.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+            }
 
-                    TextButton(onClick = { onEditKeywords(pkg) }) {
-                        Text("关键词")
-                    }
-                    TextButton(onClick = { onRemove(pkg) }) {
-                        Text("移除", color = MaterialTheme.colorScheme.error)
-                    }
-                }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(appName, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Text(
+                    if (hasCustom) "自定义关键词" else "默认关键词",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            TextButton(onClick = { onEditKeywords(packageName) }) {
+                Text("关键词")
+            }
+            TextButton(onClick = { onRemove(packageName) }) {
+                Text("移除", color = MaterialTheme.colorScheme.error)
             }
         }
     }
