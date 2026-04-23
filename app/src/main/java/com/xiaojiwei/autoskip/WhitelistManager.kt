@@ -2,7 +2,6 @@ package com.xiaojiwei.autoskip
 
 import android.content.Context
 import android.content.SharedPreferences
-import org.json.JSONArray
 
 class WhitelistManager(context: Context) {
 
@@ -18,6 +17,10 @@ class WhitelistManager(context: Context) {
             "跳过", "跳过广告", "skip", "Skip", "SKIP", "关闭广告", "点击跳过",
             "跳过 %ds", "%ds 跳过", "Skip %ds", "%ds Skip"
         )
+    }
+
+    init {
+        prefs.edit().remove(KEY_GLOBAL_KEYWORDS).apply()
     }
 
     fun getWhitelistPackages(): Set<String> {
@@ -41,23 +44,7 @@ class WhitelistManager(context: Context) {
     }
 
     fun getKeywords(): List<String> {
-        val stored = prefs.getString(KEY_GLOBAL_KEYWORDS, null) ?: return DEFAULT_KEYWORDS
-        return try {
-            val arr = JSONArray(stored)
-            (0 until arr.length()).map { arr.getString(it) }
-        } catch (_: Exception) {
-            DEFAULT_KEYWORDS
-        }
-    }
-
-    fun setKeywords(keywords: List<String>) {
-        val arr = JSONArray()
-        keywords.forEach { arr.put(it) }
-        prefs.edit().putString(KEY_GLOBAL_KEYWORDS, arr.toString()).apply()
-    }
-
-    fun resetKeywords() {
-        prefs.edit().remove(KEY_GLOBAL_KEYWORDS).apply()
+        return DEFAULT_KEYWORDS
     }
 
     fun isAutoSkipEnabled(): Boolean {

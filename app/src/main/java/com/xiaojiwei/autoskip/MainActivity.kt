@@ -62,11 +62,9 @@ fun AutoSkipApp() {
     val whitelistManager = remember { WhitelistManager(context) }
     var isServiceEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
     var showAppPicker by remember { mutableStateOf(false) }
-    var showKeywordEditor by remember { mutableStateOf(false) }
     var whitelistPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
     var isAutoSkipEnabled by remember { mutableStateOf(whitelistManager.isAutoSkipEnabled()) }
     var isToastEnabled by remember { mutableStateOf(whitelistManager.isToastEnabled()) }
-    var globalKeywords by remember { mutableStateOf(whitelistManager.getKeywords()) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -84,7 +82,6 @@ fun AutoSkipApp() {
         isServiceEnabled = isAccessibilityServiceEnabled(context)
         whitelistPackages = whitelistManager.getWhitelistPackages()
         isAutoSkipEnabled = whitelistManager.isAutoSkipEnabled()
-        globalKeywords = whitelistManager.getKeywords()
         // 用户可能从系统设置关闭了通知权限，同步状态
         if (isToastEnabled && !isNotificationPermissionGranted(context)) {
             whitelistManager.setToastEnabled(false)
@@ -152,13 +149,6 @@ fun AutoSkipApp() {
             }
 
             item {
-                KeywordConfigCard(
-                    keywordCount = globalKeywords.size,
-                    onClick = { showKeywordEditor = true }
-                )
-            }
-
-            item {
                 AddWhitelistCard(onClick = { showAppPicker = true })
             }
 
@@ -202,16 +192,6 @@ fun AutoSkipApp() {
         )
     }
 
-    // 关键词编辑弹窗
-    if (showKeywordEditor) {
-        KeywordEditorDialog(
-            whitelistManager = whitelistManager,
-            onDismiss = {
-                showKeywordEditor = false
-                globalKeywords = whitelistManager.getKeywords()
-            }
-        )
-    }
 }
 
 @Composable
@@ -329,34 +309,6 @@ fun AddWhitelistCard(onClick: () -> Unit) {
                 )
             }
             Text("+", fontSize = 24.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@Composable
-fun KeywordConfigCard(keywordCount: Int, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("跳过关键词", fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                Text(
-                    "全局生效，当前 $keywordCount 个关键词",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Text("配置", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -512,93 +464,6 @@ fun AppPickerDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("完成") }
-        }
-    )
-}
-
-@Composable
-fun KeywordEditorDialog(
-    whitelistManager: WhitelistManager,
-    onDismiss: () -> Unit
-) {
-    val currentKeywords = remember {
-        whitelistManager.getKeywords().toMutableStateList()
-    }
-    var newKeyword by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("编辑全局关键词") },
-        text = {
-            Column {
-                Text(
-                    "关键词会对所有白名单应用统一生效",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = newKeyword,
-                        onValueChange = { newKeyword = it },
-                        placeholder = { Text("添加新关键词") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = {
-                        if (newKeyword.isNotBlank() && newKeyword !in currentKeywords) {
-                            currentKeywords.add(newKeyword.trim())
-                            newKeyword = ""
-                        }
-                    }) {
-                        Text("添加")
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                LazyColumn(
-                    modifier = Modifier.height(300.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(currentKeywords.toList()) { keyword ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(keyword, modifier = Modifier.weight(1f))
-                            TextButton(onClick = { currentKeywords.remove(keyword) }) {
-                                Text("删除", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                whitelistManager.setKeywords(currentKeywords.toList())
-                onDismiss()
-            }) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = {
-                    whitelistManager.resetKeywords()
-                    onDismiss()
-                }) {
-                    Text("恢复默认")
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
-                }
-            }
         }
     )
 }
