@@ -24,6 +24,7 @@ class SkipAdService : AccessibilityService() {
 
     companion object {
         private const val TAG = "SkipAdService"
+        private val sentencePunctuation = setOf('，', '。', '！', '？', '；', '：', ',', '.', '!', '?', ';', ':', '\n')
         var isRunning = false
             private set
     }
@@ -41,6 +42,7 @@ class SkipAdService : AccessibilityService() {
 
         // 仅处理白名单中的 App
         if (!whitelistManager.isInWhitelist(packageName)) return
+        val isAutoSkipEnabled = whitelistManager.isAutoSkipEnabled()
 
         val now = System.currentTimeMillis()
 
@@ -49,14 +51,18 @@ class SkipAdService : AccessibilityService() {
                 // 记录窗口切换时间
                 windowStartTimes[packageName] = now
                 clickedElementSignatures.remove(packageName)
-                trySkipAd(packageName)
+                if (isAutoSkipEnabled) {
+                    trySkipAd(packageName)
+                }
             }
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 // 仅在窗口期内检测内容变化
                 val startTime = windowStartTimes[packageName] ?: return
                 if (now - startTime <= detectionWindowMs) {
-                    trySkipAd(packageName)
+                    if (isAutoSkipEnabled) {
+                        trySkipAd(packageName)
+                    }
                 } else {
                     clickedElementSignatures.remove(packageName)
                 }
@@ -69,25 +75,26 @@ class SkipAdService : AccessibilityService() {
         val keywords = whitelistManager.getKeywords()
 
         for (keyword in keywords) {
-            val nodes = root.findAccessibilityNodeInfosByText(keyword)
-            if (nodes.isNullOrEmpty()) continue
+            for (searchTerm in buildSearchTerms(keyword)) {
+                val nodes = root.findAccessibilityNodeInfosByText(searchTerm)
+                if (nodes.isNullOrEmpty()) continue
 
-            for (node in nodes) {
-                if (tryClickNode(node, keyword)) {
-                    return
+                for (node in nodes) {
+                    if (tryClickNode(node, keyword)) {
+                        return
+                    }
                 }
             }
         }
     }
 
     private fun tryClickNode(node: AccessibilityNodeInfo, keyword: String): Boolean {
-        // 检查节点文本是否真正包含关键词（避免部分匹配误触）
-        val nodeText = node.text?.toString() ?: ""
-        if (!nodeText.contains(keyword, ignoreCase = true) &&
-            node.contentDescription?.toString()?.contains(keyword, ignoreCase = true) != true
-        ) {
+        // 仅接受短文本按钮文案，避免“跳过去”这类正文误命中
+        if (!matchesKeyword(node, keyword)) {
             return false
         }
+
+        val nodeText = node.text?.toString() ?: node.contentDescription?.toString().orEmpty()
 
         val clickedElements = clickedElementSignatures.getOrPut(
             node.packageName?.toString() ?: return false
@@ -143,6 +150,64 @@ class SkipAdService : AccessibilityService() {
             node.className?.toString().orEmpty(),
             bounds.flattenToString()
         ).joinToString("|")
+    }
+
+    private fun buildSearchTerms(keyword: String): List<String> {
+        val normalizedKeyword = keyword.trim()
+        if (normalizedKeyword.isEmpty()) return emptyList()
+
+        val literalPrefix = normalizedKeyword.substringBefore('%').trim()
+        return listOf(literalPrefix.ifEmpty { normalizedKeyword }).distinct()
+    }
+
+    private fun matchesKeyword(node: AccessibilityNodeInfo, keyword: String): Boolean {
+        val matcher = buildKeywordRegex(keyword)
+        return sequenceOf(node.text?.toString(), node.contentDescription?.toString())
+            .filterNotNull()
+            .map(::normalizeCandidateText)
+            .filter(String::isNotEmpty)
+            .any { candidate ->
+                candidate.length <= maxOf(normalizeCandidateText(keyword).length + 6, 8) &&
+                    candidate.none(sentencePunctuation::contains) &&
+                    matcher.matches(candidate)
+            }
+    }
+
+    private fun buildKeywordRegex(keyword: String): Regex {
+        val pattern = StringBuilder("^")
+        val normalizedKeyword = keyword.trim()
+        var index = 0
+
+        while (index < normalizedKeyword.length) {
+            when {
+                normalizedKeyword.startsWith("%ds", index, ignoreCase = true) -> {
+                    pattern.append("\\s*\\d{1,2}\\s*[sS秒]?")
+                    index += 3
+                }
+
+                normalizedKeyword.startsWith("%d", index, ignoreCase = true) -> {
+                    pattern.append("\\s*\\d{1,2}")
+                    index += 2
+                }
+
+                normalizedKeyword[index].isWhitespace() -> {
+                    pattern.append("\\s*")
+                    index++
+                }
+
+                else -> {
+                    pattern.append(Regex.escape(normalizedKeyword[index].toString()))
+                    index++
+                }
+            }
+        }
+
+        pattern.append("(?:\\s*按钮)?$")
+        return Regex(pattern.toString(), RegexOption.IGNORE_CASE)
+    }
+
+    private fun normalizeCandidateText(text: String): String {
+        return text.trim().replace(Regex("\\s+"), " ")
     }
 
     override fun onInterrupt() {

@@ -64,6 +64,7 @@ fun AutoSkipApp() {
     var showAppPicker by remember { mutableStateOf(false) }
     var showKeywordEditor by remember { mutableStateOf(false) }
     var whitelistPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
+    var isAutoSkipEnabled by remember { mutableStateOf(whitelistManager.isAutoSkipEnabled()) }
     var isToastEnabled by remember { mutableStateOf(whitelistManager.isToastEnabled()) }
     var globalKeywords by remember { mutableStateOf(whitelistManager.getKeywords()) }
 
@@ -82,6 +83,7 @@ fun AutoSkipApp() {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isServiceEnabled = isAccessibilityServiceEnabled(context)
         whitelistPackages = whitelistManager.getWhitelistPackages()
+        isAutoSkipEnabled = whitelistManager.isAutoSkipEnabled()
         globalKeywords = whitelistManager.getKeywords()
         // 用户可能从系统设置关闭了通知权限，同步状态
         if (isToastEnabled && !isNotificationPermissionGranted(context)) {
@@ -112,6 +114,16 @@ fun AutoSkipApp() {
                 ServiceStatusCard(isServiceEnabled) {
                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 }
+            }
+
+            item {
+                AutoSkipToggleCard(
+                    isEnabled = isAutoSkipEnabled,
+                    onToggle = { enabled ->
+                        whitelistManager.setAutoSkipEnabled(enabled)
+                        isAutoSkipEnabled = enabled
+                    }
+                )
             }
 
             item {
@@ -258,6 +270,32 @@ fun ToastToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
                 Text("跳过提示", fontWeight = FontWeight.Medium, fontSize = 15.sp)
                 Text(
                     "跳过广告后弹出 Toast 提示",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(checked = isEnabled, onCheckedChange = onToggle)
+        }
+    }
+}
+
+@Composable
+fun AutoSkipToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("自动跳过", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Text(
+                    if (isEnabled) "已开启自动点击跳过按钮" else "已临时关闭自动点击",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
