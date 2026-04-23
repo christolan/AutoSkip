@@ -156,8 +156,19 @@ class SkipAdService : AccessibilityService() {
         val normalizedKeyword = keyword.trim()
         if (normalizedKeyword.isEmpty()) return emptyList()
 
-        val literalPrefix = normalizedKeyword.substringBefore('%').trim()
-        return listOf(literalPrefix.ifEmpty { normalizedKeyword }).distinct()
+        val literalTerms = normalizedKeyword
+            .replace("%ds", " ", ignoreCase = true)
+            .replace("%d", " ", ignoreCase = true)
+            .split(Regex("\\s+"))
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .sortedByDescending(String::length)
+
+        return if (literalTerms.isEmpty()) {
+            listOf(normalizedKeyword)
+        } else {
+            literalTerms.distinct()
+        }
     }
 
     private fun matchesKeyword(node: AccessibilityNodeInfo, keyword: String): Boolean {
