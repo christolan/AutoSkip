@@ -1,8 +1,6 @@
 package com.xiaojiwei.autoskip
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -12,9 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -26,16 +21,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,7 +66,6 @@ fun AutoSkipApp() {
     var whitelistPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
     var isAutoSkipEnabled by remember { mutableStateOf(whitelistManager.isAutoSkipEnabled()) }
     var isToastEnabled by remember { mutableStateOf(whitelistManager.isToastEnabled()) }
-    var showLogForPackage by remember { mutableStateOf<String?>(null) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -158,6 +149,7 @@ fun AutoSkipApp() {
                 )
             }
 
+
             item {
                 AddWhitelistCard(onClick = { showAppPicker = true })
             }
@@ -185,7 +177,7 @@ fun AutoSkipApp() {
                         whitelistManager.removePackage(pkg)
                         whitelistPackages = whitelistManager.getWhitelistPackages()
                     },
-                    onShowLog = { pkg -> showLogForPackage = pkg }
+
                 )
             }
         }
@@ -203,19 +195,6 @@ fun AutoSkipApp() {
         )
     }
 
-    // 检测日志弹窗
-    showLogForPackage?.let { pkg ->
-        val pm = context.packageManager
-        val appInfo = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
-        val appName = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: pkg
-        val logs = SkipAdService.appLogs[pkg]
-        DetectionLogDialog(
-            appName = appName,
-            packageName = pkg,
-            logs = logs,
-            onDismiss = { showLogForPackage = null }
-        )
-    }
 
 }
 
@@ -259,8 +238,7 @@ fun ServiceStatusCard(isEnabled: Boolean, onClickEnable: () -> Unit) {
 }
 
 @Composable
-fun ToastToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {
-    Card(
+fun ToastToggleCard(isEnabled: Boolean, onToggle: (Boolean) -> Unit) {    Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -341,8 +319,7 @@ fun AddWhitelistCard(onClick: () -> Unit) {
 private fun LazyListScope.WhitelistAppList(
     packages: List<String>,
     context: Context,
-    onRemove: (String) -> Unit,
-    onShowLog: (String) -> Unit
+    onRemove: (String) -> Unit
 ) {
     val pm = context.packageManager
 
@@ -350,8 +327,7 @@ private fun LazyListScope.WhitelistAppList(
         WhitelistAppCard(
             packageName = pkg,
             packageManager = pm,
-            onRemove = onRemove,
-            onShowLog = onShowLog
+            onRemove = onRemove
         )
     }
 }
@@ -360,8 +336,7 @@ private fun LazyListScope.WhitelistAppList(
 private fun WhitelistAppCard(
     packageName: String,
     packageManager: PackageManager,
-    onRemove: (String) -> Unit,
-    onShowLog: (String) -> Unit
+    onRemove: (String) -> Unit
 ) {
     val appInfo = try {
         packageManager.getApplicationInfo(packageName, 0)
@@ -372,8 +347,7 @@ private fun WhitelistAppCard(
 
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onShowLog(packageName) },
+            .fillMaxWidth(),
         shape = RoundedCornerShape(8.dp)
     ) {
         Row(
@@ -507,118 +481,6 @@ fun isAccessibilityServiceEnabled(context: Context): Boolean {
     return enabledServices.contains(serviceName)
 }
 
-@Composable
-fun DetectionLogDialog(
-    appName: String,
-    packageName: String,
-    logs: List<SkipAdService.DetectionLog>?,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val logText = remember(logs) { formatAppLogs(packageName, appName, logs) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("$appName - 检测日志") },
-        text = {
-            Column(modifier = Modifier.heightIn(max = 400.dp)) {
-                Text(
-                    text = logText,
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("检测日志", logText))
-                    Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                }
-            ) { Text("复制") }
-        }
-    )
-}
-
-private fun formatAppLogs(
-    packageName: String,
-    appName: String,
-    logs: List<SkipAdService.DetectionLog>?
-): String {
-    if (logs.isNullOrEmpty()) {
-        return "暂无该应用的检测日志。\n\n请打开该应用触发广告页面后再次查看。"
-    }
-
-    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-    val sb = StringBuilder()
-    sb.appendLine("应用: $appName ($packageName)")
-    sb.appendLine("日志条数: ${logs.size}")
-    sb.appendLine()
-
-    logs.forEachIndexed { index, log ->
-        sb.appendLine("========== 记录 ${index + 1} ==========")
-        sb.appendLine("时间: ${dateFormat.format(Date(log.timestamp))}")
-        sb.appendLine("事件: ${log.eventType}")
-        sb.appendLine("窗口大小: ${log.rootBounds}")
-        sb.appendLine("关键词: ${log.keywords.joinToString(", ")}")
-        sb.appendLine()
-
-        if (log.candidates.isEmpty()) {
-            sb.appendLine("候选节点: 无")
-        } else {
-            sb.appendLine("候选节点 (共 ${log.candidates.size} 个):")
-            log.candidates.forEachIndexed { cIndex, c ->
-                sb.appendLine("--- 候选 ${cIndex + 1} ---")
-                sb.appendLine("  匹配文本: \"${c.matchedText}\"")
-                sb.appendLine("  关键词: ${c.keyword}")
-                sb.appendLine("  得分: ${c.score} | 深度: ${c.depth}")
-                sb.appendLine("  类名: ${c.className ?: "未知"}")
-                sb.appendLine("  资源名: ${c.resourceName ?: "无"}")
-                sb.appendLine("  位置: ${c.bounds}")
-                val result = when {
-                    c.isClicked -> "✅ 已点击"
-                    c.filterReason != null -> "❌ ${c.filterReason}"
-                    else -> "⏭ 未尝试"
-                }
-                sb.appendLine("  结果: $result")
-            }
-        }
-        if (log.clickableNodes.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("观察到的元素 (共 ${log.clickableNodes.size} 个):")
-            log.clickableNodes.forEachIndexed { nodeIndex, node ->
-                sb.appendLine("--- 节点 ${nodeIndex + 1} ---")
-                sb.appendLine("  文本: ${node.text?.let { "\"$it\"" } ?: "无"}")
-                sb.appendLine("  描述: ${node.contentDescription?.let { "\"$it\"" } ?: "无"}")
-                sb.appendLine("  类名: ${node.className ?: "未知"}")
-                sb.appendLine("  资源名: ${node.resourceName ?: "无"}")
-                sb.appendLine("  位置: ${node.bounds}")
-                sb.appendLine("  可点击: ${if (node.isClickable) "是" else "否"}")
-                sb.appendLine("  含“跳过”: ${if (node.containsSkipText) "是" else "否"}")
-                sb.appendLine("  启用: ${if (node.isEnabled) "是" else "否"}")
-                sb.appendLine("  目标判定: ${if (node.isReasonableTarget) "通过" else "未通过"}")
-                sb.appendLine("  备注: ${node.note}")
-            }
-        }
-        sb.appendLine("最终结果: ${log.resultSummary}")
-        sb.appendLine()
-    }
-
-    return sb.toString()
-}
-
 fun isNotificationPermissionGranted(context: Context): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.checkSelfPermission(
-            context, Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
-    } else {
-        NotificationManagerCompat.from(context).areNotificationsEnabled()
-    }
+    return NotificationManagerCompat.from(context).areNotificationsEnabled()
 }
