@@ -1,40 +1,71 @@
-# AutoSkip
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions
+as needed.
 
-自动跳过 Android 应用开屏广告的无障碍服务工具。
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
-## 项目目标
+## 1. Think Before Coding
 
-通过 Android AccessibilityService 监听白名单应用的界面变化，自动识别并点击"跳过"按钮，实现零操作跳过开屏广告。
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
 
-## 核心架构
+Before implementing:
+
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
 
 ```
-├── SkipAdService          # 无障碍服务（核心）
-│   ├── 监听 WINDOW_STATE_CHANGED / WINDOW_CONTENT_CHANGED 事件
-│   ├── 仅处理白名单中的包名
-│   ├── 窗口切换后 8 秒检测窗口期，避免误触
-│   └── 内置跳过规则匹配 → 查找可点击节点 → 执行点击
-│
-├── WhitelistManager       # 白名单与配置管理（SharedPreferences）
-│   ├── 白名单包名增删查
-│   └── Toast 开关等功能配置
-│
-└── MainActivity           # Compose UI
-    ├── 无障碍服务状态卡片（引导开启）
-    ├── Toast 提示开关（联动通知权限申请）
-    ├── 白名单应用列表（移除）
-    └── 应用选择器（已安装非系统应用，支持搜索）
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
 ```
 
-## 技术栈
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant
+clarification.
 
-- Kotlin + Jetpack Compose
-- Android AccessibilityService
-- SharedPreferences
-- Target SDK 36
+---
 
-## 构建
-
-```bash
-./gradlew assembleDebug
-```
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to
+overcomplication, and clarifying questions come before implementation rather than after mistakes.
