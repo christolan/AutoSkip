@@ -410,13 +410,17 @@ fun AppPickerDialog(
 ) {
     val pm = context.packageManager
     var searchQuery by remember { mutableStateOf("") }
-    var selectedPackages by remember { mutableStateOf(whitelistManager.getWhitelistPackages()) }
-    val installedApps = remember {
+    val initialSelectedPackages = remember { whitelistManager.getWhitelistPackages() }
+    var selectedPackages by remember { mutableStateOf(initialSelectedPackages) }
+    val installedApps = remember(initialSelectedPackages) {
         pm.getInstalledApplications(PackageManager.GET_META_DATA)
             .filter { it.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0 }
             .filter { it.packageName != context.packageName }
             .map { AppItem(it.packageName, pm.getApplicationLabel(it).toString(), pm.getApplicationIcon(it)) }
-            .sortedBy { it.appName }
+            .sortedWith(
+                compareByDescending<AppItem> { it.packageName in initialSelectedPackages }
+                    .thenBy { it.appName }
+            )
     }
 
     val filteredApps = remember(searchQuery) {
