@@ -113,14 +113,7 @@ fun AutoSkipApp() {
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("AutoSkip") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            )
-        }
+        contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top)
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
