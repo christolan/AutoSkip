@@ -23,6 +23,13 @@ class WhitelistManager(context: Context) {
         prefs.edit().putStringSet(KEY_WHITELIST, current).apply()
     }
 
+    fun addPackages(packageNames: Set<String>) {
+        if (packageNames.isEmpty()) return
+        val current = getWhitelistPackages().toMutableSet()
+        current.addAll(packageNames)
+        prefs.edit().putStringSet(KEY_WHITELIST, current).apply()
+    }
+
     fun removePackage(packageName: String) {
         val current = getWhitelistPackages().toMutableSet()
         current.remove(packageName)

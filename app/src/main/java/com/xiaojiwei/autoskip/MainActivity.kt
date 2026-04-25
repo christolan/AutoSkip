@@ -42,6 +42,29 @@ data class AppItem(
     val icon: Drawable
 )
 
+private val recommendedWhitelistPackages = setOf(
+    "com.android36kr.app",
+    "com.autonavi.minimap",
+    "com.dianping.v1",
+    "com.hb.xiaobien",
+    "com.heytap.health",
+    "com.heytap.themestore",
+    "com.jingdong.app.mall",
+    "com.oppo.store",
+    "com.phoenix.read",
+    "com.ruanmei.ithome",
+    "com.sankuai.meituan",
+    "com.sina.weibo",
+    "com.sinovatech.unicom.ui",
+    "com.taobao.idlefish",
+    "com.taobao.taobao",
+    "com.taou.maimai",
+    "com.tencent.qqmusic",
+    "com.xiaomi.smarthome",
+    "com.xingin.xhs",
+    "tv.danmaku.bili"
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -403,12 +426,27 @@ fun AppPickerDialog(
                     it.packageName.contains(searchQuery, ignoreCase = true)
         }
     }
+    val installedRecommendedPackages = remember(installedApps) {
+        installedApps.mapTo(mutableSetOf()) { it.packageName }
+            .intersect(recommendedWhitelistPackages)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("选择应用") },
         text = {
             Column {
+                OutlinedButton(
+                    onClick = {
+                        whitelistManager.addPackages(installedRecommendedPackages)
+                        selectedPackages = whitelistManager.getWhitelistPackages()
+                    },
+                    enabled = installedRecommendedPackages.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("选择推荐应用 (${installedRecommendedPackages.size})")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
