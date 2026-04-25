@@ -79,10 +79,12 @@ class SkipAdService : AccessibilityService() {
 
                 val existingStart = windowStartTimes[packageName]
                 val isNewSession = existingStart == null || (now - existingStart > detectionWindowMs)
-                windowStartTimes[packageName] = now
-                lastContentChangedTimes.remove(packageName)
-                clickedElementSignatures.remove(packageName)
-                scheduleDetectionSummary(packageName)
+                if (isNewSession) {
+                    windowStartTimes[packageName] = now
+                    lastContentChangedTimes.remove(packageName)
+                    clickedElementSignatures.remove(packageName)
+                    scheduleDetectionSummary(packageName)
+                }
                 if (isAutoSkipEnabled) {
                     trySkipAd(packageName, "WINDOW_STATE_CHANGED")
                 }
@@ -335,7 +337,7 @@ class SkipAdService : AccessibilityService() {
             .filterNotNull()
             .map(::normalizeCandidateText)
             .filter(String::isNotEmpty)
-            .firstOrNull { "\u8df3\u8fc7" in it }
+            .firstOrNull { "\u8df3\u8fc7" in it && it.length <= 6 }
     }
 
     private fun scoreCandidate(

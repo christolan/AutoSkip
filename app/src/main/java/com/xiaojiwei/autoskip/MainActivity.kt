@@ -9,7 +9,6 @@ import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -32,7 +31,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -83,10 +81,11 @@ fun AutoSkipApp() {
         isServiceEnabled = isAccessibilityServiceEnabled(context)
         whitelistPackages = whitelistManager.getWhitelistPackages()
         isAutoSkipEnabled = whitelistManager.isAutoSkipEnabled()
-        // 用户可能从系统设置关闭了通知权限，同步状态
         if (isToastEnabled && !isNotificationPermissionGranted(context)) {
             whitelistManager.setToastEnabled(false)
             isToastEnabled = false
+        } else {
+            isToastEnabled = whitelistManager.isToastEnabled()
         }
     }
 
@@ -135,7 +134,6 @@ fun AutoSkipApp() {
                             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                             } else {
-                                // Android 12 及以下，引导到通知设置
                                 val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                                     putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
                                 }
